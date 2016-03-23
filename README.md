@@ -4,10 +4,10 @@ An simple subprocess pipeline in Go.
 
 ## Aims
 
-* Acts basically as you would expect it to.
+* Behaves basically as you would expect it to.
 * Maximum throughput through concurrency. 
 * Configurably stderr verbosity.
-* User sets up exec.Cmd structures for maximum flexibility.
+* User sets up `exec.Cmd` structures for maximum flexibility.
 
 ## Short Example
 
