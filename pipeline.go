@@ -13,21 +13,13 @@ type Pipeline struct {
     output io.Writer
     err io.Writer
     tasks []*exec.Cmd
-    // Verbose is a switch controlling error reporting.  If false, then stderr reports are
-    // limited to those processes prior to and including the first process that failed. If true,
-    // then all stderr reports will be output
-    Verbose bool
 }
 
 type linkage struct {
     w io.Writer
     r io.Reader
     errs []io.Reader
-}
-
-type taskerr struct {
-    errpipe io.Reader
-    index int
+    errcache []io.Reader
 }
 
 // Exec runs the pipeline: stdout from process n will be fed to process n + 1.
@@ -38,35 +30,20 @@ func (pl *Pipeline) Exec() error {
         return linkerr
     }
 
-    taskerrch, setuperr := pl.copyPipes(link)
+    setuperr := pl.copyPipes(link)
     if setuperr != nil {
         return setuperr
     }
 
-    errlim, runerr := pl.runTasks(link)
+    runerr := pl.runTasks(link)
     if runerr != nil {
         return runerr
     }
 
-    return pl.reportErrors(taskerrch, errlim)
+    return nil
 }
 
-func (pl *Pipeline) reportErrors(taskerrch <-chan taskerr, errlim int) error {
-    errs := []error{}
-    // Copy stderr with respect to order and verbosity
-    for te := range taskerrch {
-        if te.index <= errlim {
-            _, reporterr := io.Copy(pl.err, te.errpipe)
-            if reporterr != nil {
-                errs = append(errs, reporterr)
-            }
-        }
-    }
-
-    return joinErrs(errs)
-}
-
-func (pl *Pipeline) runTasks(link linkage) (int, error) {
+func (pl *Pipeline) runTasks(link linkage) error {
     errs := []error{}
 
     // Launch all subprocesses
@@ -74,90 +51,104 @@ func (pl *Pipeline) runTasks(link linkage) (int, error) {
         t.Start()
     }
 
-    // Wait for subprocess to stop
-    var errlim int
-    if pl.Verbose {
-        errlim = len(pl.tasks)
-    }
-    bad := false
-    for i, t := range pl.tasks {
+    for _, t := range pl.tasks {
         procerr := t.Wait()
         if procerr != nil {
-            if !bad && !pl.Verbose {
-                errlim = i
-            }
             errs = append(errs, procerr)
         }
     }
 
-    return errlim, joinErrs(errs)
+    return joinErrs(errs)
 }
 
-func (pl *Pipeline) copyPipes(link linkage) (<-chan taskerr, error) {
-    errch := make(chan error)
-
+func (pl *Pipeline) copyPipes(link linkage) error {
     // Sync pipe copy operations
     wg := sync.WaitGroup{}
+    // Error buffer
+    taskcnt := len(pl.tasks)
+    exceptions := make([]chan error, (2 * taskcnt) + 2)
 
     // Input copy
     wg.Add(1)
+    inerrch := make(chan error)
+    exceptions[0] = inerrch
     go func() {
         _, inerr := io.Copy(link.w, pl.input)
-        if inerr != nil {
-            errch<- inerr
-        }
+        go func() {
+            if inerr != nil {
+                inerrch<- inerr
+            }
+            close(inerrch)
+        }()
         wg.Done()
     }()
 
     // Output copy
     wg.Add(1)
+    outerrch := make(chan error)
+    exceptions[1] = outerrch
     go func(){
         _, outerr := io.Copy(pl.output, link.r)
-        if outerr != nil {
-            errch<- outerr
-        }
+        go func() {
+            if outerr != nil {
+                outerrch<- outerr
+            }
+            close(outerrch)
+        }()
+
         wg.Done()
     }()
 
-    // Error copy
-    taskerrch := make(chan taskerr)
-    taskcnt := len(pl.tasks)
-
-    errg := sync.WaitGroup{}
+    // Copy errors to cache
+    errcache := make([]io.Reader, taskcnt)
     wg.Add(taskcnt)
-    errg.Add(taskcnt)
-
     for i, t := range pl.tasks {
-        go func (index int, task *exec.Cmd) {
-            read, write := io.Pipe()
-            _, cpyerr := io.Copy(write, link.errs[index])
-            go func() {
-                te := taskerr{}
-                te.errpipe = read
-                te.index = index
-                taskerrch<- te
-                errg.Done()
-            }()
+        read, write := io.Pipe()
+        errcache[i] = read
 
-            if cpyerr != nil {
-                errch<- cpyerr
-            }
+        errch := make(chan error)
+        exceptions[i + 2] = errch
+
+        reportpipe := link.errs[i]
+        go func (task *exec.Cmd) {
+            _, cpyerr := io.Copy(write, reportpipe)
+
+            go func() {
+                if cpyerr != nil {
+                    errch<- cpyerr
+                }
+                close(errch)
+            }()
             wg.Done()
-        }(i, t)
+        }(t)
     }
 
     // Wait for goroutines
-    go func() {
-        errg.Wait()
-        close(taskerrch)
-    }()
+    wg.Wait()
 
-    go func() {
-        wg.Wait()
-        close(errch)
-    }()
+    // Copy errors out
+    offset := taskcnt + 2
+    for i, reportpipe := range link.errcache {
+        errch := make(chan error)
+        exceptions[offset + i] = errch
+        _, cpyerr := io.Copy(pl.err, reportpipe)
+        go func() {
+            if cpyerr != nil {
+                errch<- cpyerr
+            }
+            close(errch)
+        }()
+    }
 
-    return taskerrch, pumpErrs(errch)
+    errs := []error{}
+    for _, repch := range exceptions {
+        err, readok := <-repch
+        if readok {
+            errs = append(errs, err)
+        }
+    }
+
+    return joinErrs(errs)
 }
 
 func (pl *Pipeline) linkPipes() (linkage, error) {
@@ -233,16 +224,6 @@ func pipes(task *exec.Cmd) (io.ReadCloser, io.ReadCloser, error) {
     }
 
     return outp, errp, nil
-}
-
-func pumpErrs(errch <-chan error) error {
-    errs := []error{}
-
-    for err := range errch {
-        errs = append(errs, err)
-    }
-
-    return joinErrs(errs)
 }
 
 func joinErrs(errs []error) error {
