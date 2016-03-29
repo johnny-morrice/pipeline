@@ -19,13 +19,12 @@ From a test
     inbuff := &bytes.Buffer{}
     outbuff := &bytes.Buffer{}
     reportbuff := &bytes.Buffer{}
+    fmt.Fprintln(inbuff, "Hello, world")
 
     pl := pipeline.New(inbuff, outbuff, reportbuff)
     pl.Chain(cat, wc, tee)
 
     pl.Exec()
-
-    fmt.Fprintln(inbuff, "Hello, world")
 
     var count int
     fmt.Fscan(outbuff, &count) // count == 13
