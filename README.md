@@ -14,11 +14,16 @@ From a test
 
     cat := exec.Command("cat") // Useless use of cat to test inner links
     wc := exec.Command("wc", "--char")
-    sort := exec.Command("tee", "/dev/stderr")
+    tee := exec.Command("tee", "/dev/stderr")
 
     inbuff := &bytes.Buffer{}
     outbuff := &bytes.Buffer{}
     reportbuff := &bytes.Buffer{}
+
+    pl := pipeline.New(inbuff, outbuff, reportbuff)
+    pl.Chain(cat, wc, tee)
+
+    pl.Exec()
 
     fmt.Fprintln(inbuff, "Hello, world")
 

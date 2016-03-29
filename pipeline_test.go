@@ -15,7 +15,7 @@ import (
 func TestExec(t *testing.T) {
     cat := exec.Command("cat") // Useless use of cat to test inner links
     wc := exec.Command("wc", "--char")
-    sort := exec.Command("tee", "/dev/stderr")
+    tee := exec.Command("tee", "/dev/stderr")
 
     inbuff := &bytes.Buffer{}
     outbuff := &bytes.Buffer{}
@@ -40,7 +40,7 @@ func TestExec(t *testing.T) {
     }()
 
     pl := New(inbuff, outbuff, reportbuff)
-    pl.Chain(cat, wc, sort)
+    pl.Chain(cat, wc, tee)
 
     pl.Exec()
 
