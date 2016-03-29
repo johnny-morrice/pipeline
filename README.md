@@ -5,8 +5,7 @@ An simple subprocess pipeline in Go.
 ## Aims
 
 * Behaves basically as you would expect it to.
-* Maximum throughput through concurrency. 
-* Configurably stderr verbosity.
+* Maximum throughput and minimal process blocking through concurrency.
 * User sets up `exec.Cmd` structures for maximum flexibility.
 
 ## Short Example
@@ -15,13 +14,13 @@ An simple subprocess pipeline in Go.
     pl.Verbose = true
     # Assuming you imported os/exec and made Cmd structures already
     pl.Chain(findCmd, lsCmd, grepCmd)
-    # Chain takes variable numbers of arguments 
+    # Chain takes variable numbers of arguments
     pl.Chain(otherCommandList...)
     err := pl.Exec()
 
 ## Status
 
-Just wrote this evening; test tomorrow.
+Experimental.
 
 ## Credits
 
