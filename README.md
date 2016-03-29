@@ -8,7 +8,7 @@ A simple subprocess pipeline in Go.
 * Maximum throughput with minimal process blocking through concurrency.
 * User sets up `exec.Cmd` structures for maximum flexibility.
 
-## Short Example
+## Example
 
 From a test
 
