@@ -5,7 +5,7 @@ A simple subprocess pipeline in Go.
 ## Aims
 
 * Behaves basically as you would expect it to.
-* Maximum throughput with minimal process blocking through concurrency.
+* Maximum throughput with minimal process blocking (concurrency helps).
 * User sets up `exec.Cmd` structures for maximum flexibility.
 
 ## Example
