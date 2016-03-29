@@ -113,18 +113,22 @@ func (pl *Pipeline) copyPipes(link linkage) error {
     }()
 
     // Copy errors to cache
-    errcache := make([]io.Reader, taskcnt)
+    errcache := make([]chan io.Reader, taskcnt)
     wg.Add(taskcnt)
     for i, t := range pl.tasks {
-        buff := &bytes.Buffer{}
-        errcache[i] = buff
+        buffch := make(chan io.Reader)
+        errcache[i] = buffch
 
         errch := make(chan error)
         exceptions[i + 2] = errch
 
         reportpipe := link.errs[i]
         go func (task *exec.Cmd) {
+            buff := &bytes.Buffer{}
             _, cpyerr := io.Copy(buff, reportpipe)
+            go func() {
+                buffch<- buff
+            }()
 
             go func() {
                 if cpyerr != nil {
@@ -138,12 +142,16 @@ func (pl *Pipeline) copyPipes(link linkage) error {
 
     // Copy errors out
     wg.Add(1)
+    offset := taskcnt + 2
+    for i := offset; i < len(exceptions); i++ {
+        errch := make(chan error)
+        exceptions[i] = errch
+    }
     go func() {
-        offset := taskcnt + 2
-        for i, cache := range errcache {
-            errch := make(chan error)
-            exceptions[offset + i] = errch
-            _, cpyerr := io.Copy(pl.err, cache)
+        for i, buffch := range errcache {
+            errch := exceptions[offset + i]
+            buff := <-buffch
+            _, cpyerr := io.Copy(pl.err, buff)
             go func() {
                 if cpyerr != nil {
                     errch<- cpyerr
@@ -156,8 +164,6 @@ func (pl *Pipeline) copyPipes(link linkage) error {
 
     // Wait for goroutines
     wg.Wait()
-
-
 
     errs := []error{}
     for _, repch := range exceptions {
@@ -260,5 +266,4 @@ func joinErrs(errs []error) error {
     } else {
         return nil
     }
-
 }

@@ -56,7 +56,7 @@ func TestExec(t *testing.T) {
     }
 
     var report int
-    n, err = fmt.Fscan(reportbuff, report)
+    n, err = fmt.Fscan(reportbuff, &report)
     if err != nil {
         t.Error("Error after", n, "items")
     }
