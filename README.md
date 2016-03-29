@@ -1,6 +1,6 @@
 # Pipeline
 
-An simple subprocess pipeline in Go.
+A simple subprocess pipeline in Go.
 
 ## Aims
 
@@ -10,13 +10,23 @@ An simple subprocess pipeline in Go.
 
 ## Short Example
 
-    pl := pipeline.New(os.Stdin, os.Stdout, os.Stderr)
-    pl.Verbose = true
-    # Assuming you imported os/exec and made Cmd structures already
-    pl.Chain(findCmd, lsCmd, grepCmd)
-    # Chain takes variable numbers of arguments
-    pl.Chain(otherCommandList...)
-    err := pl.Exec()
+From a test
+
+    cat := exec.Command("cat") // Useless use of cat to test inner links
+    wc := exec.Command("wc", "--char")
+    sort := exec.Command("tee", "/dev/stderr")
+
+    inbuff := &bytes.Buffer{}
+    outbuff := &bytes.Buffer{}
+    reportbuff := &bytes.Buffer{}
+
+    fmt.Fprintln(inbuff, "Hello, world")
+
+    var count int
+    fmt.Fscan(outbuff, &count) // count == 13
+
+    var report int
+    fmt.Fscan(reportbuff, &report) // report == 13
 
 ## Status
 
