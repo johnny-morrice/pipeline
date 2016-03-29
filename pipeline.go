@@ -1,4 +1,4 @@
-package pchain
+package pipeline
 
 import (
     "errors"
