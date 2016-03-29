@@ -16,10 +16,9 @@ type Pipeline struct {
 }
 
 type linkage struct {
-    w io.Writer
-    r io.Reader
-    errs []io.Reader
-    errcache []io.Reader
+    w io.WriteCloser
+    r io.ReadCloser
+    errs []io.ReadCloser
 }
 
 // Exec runs the pipeline: stdout from process n will be fed to process n + 1.
@@ -30,26 +29,39 @@ func (pl *Pipeline) Exec() error {
         return linkerr
     }
 
+    starterr := pl.start()
+    if starterr != nil {
+        return starterr
+    }
+
     setuperr := pl.copyPipes(link)
     if setuperr != nil {
         return setuperr
     }
 
-    runerr := pl.runTasks(link)
-    if runerr != nil {
-        return runerr
+    waiterr := pl.wait()
+    if waiterr != nil {
+        return waiterr
     }
 
     return nil
 }
 
-func (pl *Pipeline) runTasks(link linkage) error {
+func (pl *Pipeline) start() error {
     errs := []error{}
-
     // Launch all subprocesses
     for _, t := range pl.tasks {
-        t.Start()
+        err := t.Start()
+        if err != nil {
+            errs = append(errs, err)
+        }
     }
+
+    return joinErrs(errs)
+}
+
+func (pl *Pipeline) wait() error {
+    errs := []error{}
 
     for _, t := range pl.tasks {
         procerr := t.Wait()
@@ -74,6 +86,7 @@ func (pl *Pipeline) copyPipes(link linkage) error {
     exceptions[0] = inerrch
     go func() {
         _, inerr := io.Copy(link.w, pl.input)
+        link.w.Close()
         go func() {
             if inerr != nil {
                 inerrch<- inerr
@@ -103,15 +116,15 @@ func (pl *Pipeline) copyPipes(link linkage) error {
     errcache := make([]io.Reader, taskcnt)
     wg.Add(taskcnt)
     for i, t := range pl.tasks {
-        read, write := io.Pipe()
-        errcache[i] = read
+        buff := &bytes.Buffer{}
+        errcache[i] = buff
 
         errch := make(chan error)
         exceptions[i + 2] = errch
 
         reportpipe := link.errs[i]
         go func (task *exec.Cmd) {
-            _, cpyerr := io.Copy(write, reportpipe)
+            _, cpyerr := io.Copy(buff, reportpipe)
 
             go func() {
                 if cpyerr != nil {
@@ -123,22 +136,28 @@ func (pl *Pipeline) copyPipes(link linkage) error {
         }(t)
     }
 
+    // Copy errors out
+    wg.Add(1)
+    go func() {
+        offset := taskcnt + 2
+        for i, cache := range errcache {
+            errch := make(chan error)
+            exceptions[offset + i] = errch
+            _, cpyerr := io.Copy(pl.err, cache)
+            go func() {
+                if cpyerr != nil {
+                    errch<- cpyerr
+                }
+                close(errch)
+            }()
+        }
+        wg.Done()
+    }()
+
     // Wait for goroutines
     wg.Wait()
 
-    // Copy errors out
-    offset := taskcnt + 2
-    for i, reportpipe := range link.errcache {
-        errch := make(chan error)
-        exceptions[offset + i] = errch
-        _, cpyerr := io.Copy(pl.err, reportpipe)
-        go func() {
-            if cpyerr != nil {
-                errch<- cpyerr
-            }
-            close(errch)
-        }()
-    }
+
 
     errs := []error{}
     for _, repch := range exceptions {
@@ -153,7 +172,7 @@ func (pl *Pipeline) copyPipes(link linkage) error {
 
 func (pl *Pipeline) linkPipes() (linkage, error) {
     taskcnt := len(pl.tasks)
-    errpipes := make([]io.Reader, taskcnt)
+    errpipes := make([]io.ReadCloser, taskcnt)
     link := linkage{}
 
     // Setup first task
@@ -183,12 +202,14 @@ func (pl *Pipeline) linkPipes() (linkage, error) {
     }
 
     // Setup last task
-    last := taskcnt - 1
-    lastout, lasterr, perrN := pipes(pl.tasks[last])
+    lastdex := taskcnt - 1
+    last := pl.tasks[lastdex]
+    last.Stdin = prevout
+    lastout, lasterr, perrN := pipes(last)
     if perrN != nil {
         return link, nil
     }
-    errpipes[last] = lasterr
+    errpipes[lastdex] = lasterr
 
     link.w = firstin
     link.r = lastout
