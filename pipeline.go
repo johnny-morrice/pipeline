@@ -16,8 +16,6 @@ type Pipeline struct {
 }
 
 type linkage struct {
-    w io.WriteCloser
-    r io.ReadCloser
     errs []io.ReadCloser
 }
 
@@ -78,39 +76,7 @@ func (pl *Pipeline) copyPipes(link linkage) error {
     wg := sync.WaitGroup{}
     // Error buffer
     taskcnt := len(pl.tasks)
-    exceptions := make([]chan error, (2 * taskcnt) + 2)
-
-    // Input copy
-    wg.Add(1)
-    inerrch := make(chan error)
-    exceptions[0] = inerrch
-    go func() {
-        _, inerr := io.Copy(link.w, pl.input)
-        link.w.Close()
-        go func() {
-            if inerr != nil {
-                inerrch<- inerr
-            }
-            close(inerrch)
-        }()
-        wg.Done()
-    }()
-
-    // Output copy
-    wg.Add(1)
-    outerrch := make(chan error)
-    exceptions[1] = outerrch
-    go func(){
-        _, outerr := io.Copy(pl.output, link.r)
-        go func() {
-            if outerr != nil {
-                outerrch<- outerr
-            }
-            close(outerrch)
-        }()
-
-        wg.Done()
-    }()
+    exceptions := make([]chan error, 2 * taskcnt)
 
     // Copy errors to cache
     errcache := make([]chan io.Reader, taskcnt)
@@ -120,7 +86,7 @@ func (pl *Pipeline) copyPipes(link linkage) error {
         errcache[i] = buffch
 
         errch := make(chan error)
-        exceptions[i + 2] = errch
+        exceptions[i] = errch
 
         reportpipe := link.errs[i]
         go func (task *exec.Cmd) {
@@ -142,7 +108,7 @@ func (pl *Pipeline) copyPipes(link linkage) error {
 
     // Copy errors out
     wg.Add(1)
-    offset := taskcnt + 2
+    offset := taskcnt
     for i := offset; i < len(exceptions); i++ {
         errch := make(chan error)
         exceptions[i] = errch
@@ -188,10 +154,7 @@ func (pl *Pipeline) linkPipes() (linkage, error) {
         return link, perr0
     }
 
-    firstin, ferr := first.StdinPipe()
-    if ferr != nil {
-        return link, ferr
-    }
+    first.Stdin = pl.input
 
     errpipes[0] = preverr
 
@@ -211,14 +174,14 @@ func (pl *Pipeline) linkPipes() (linkage, error) {
     lastdex := taskcnt - 1
     last := pl.tasks[lastdex]
     last.Stdin = prevout
-    lastout, lasterr, perrN := pipes(last)
+    lasterr, perrN := last.StderrPipe()
     if perrN != nil {
         return link, nil
     }
+    last.Stdout = pl.output
     errpipes[lastdex] = lasterr
 
-    link.w = firstin
-    link.r = lastout
+
     link.errs = errpipes
 
     return link, nil
