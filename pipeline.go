@@ -170,16 +170,16 @@ func (pl *Pipeline) linkPipes() (linkage, error) {
         prevout, preverr = currout, currerr
     }
 
+    // Setup last task
+    lastdex := taskcnt - 1
+    last := pl.tasks[lastdex]
+    last.Stdout = pl.output
     if taskcnt > 1 {
-            // Setup last task
-            lastdex := taskcnt - 1
-            last := pl.tasks[lastdex]
             last.Stdin = prevout
             lasterr, perrN := last.StderrPipe()
             if perrN != nil {
                 return link, perrN
             }
-            last.Stdout = pl.output
             errpipes[lastdex] = lasterr
     }
 
